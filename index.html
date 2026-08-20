@@ -6,7 +6,14 @@
 <title>LEDGER/TAPE — Análise & Carteira Simulada de Criptomoedas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<!-- Chart.js é carregado dinamicamente em runtime (ver ensureChartLib), com fallback entre CDNs -->
+<script>
+  window.__CHART_CDNS = [
+    'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js',
+    'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js',
+    'https://unpkg.com/chart.js@4.4.4/dist/chart.umd.min.js'
+  ];
+</script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
@@ -899,12 +906,39 @@ async function selectCoin(id){
   loadChart(id, state.range);
 }
 
+/* ---- carregador do Chart.js com fallback entre CDNs ---- */
+let chartLibPromise = null;
+function loadScriptOnce(url){
+  return new Promise((resolve, reject)=>{
+    const s = document.createElement('script');
+    s.src = url;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('cdn_falhou:' + url));
+    document.head.appendChild(s);
+  });
+}
+function ensureChartLib(){
+  if(window.Chart) return Promise.resolve();
+  if(chartLibPromise) return chartLibPromise;
+  chartLibPromise = (async ()=>{
+    for(const url of (window.__CHART_CDNS || [])){
+      try{
+        await loadScriptOnce(url);
+        if(window.Chart) return;
+      }catch(e){ console.warn('Falhou carregar Chart.js de', url, e); }
+    }
+    throw new Error('chartlib_indisponivel');
+  })();
+  return chartLibPromise;
+}
+
 async function loadChart(id, days){
   const box = document.getElementById('priceChart');
   if(!box) return;
   box.parentElement.querySelector('.chart-error')?.remove();
   box.style.display = '';
   try{
+    await ensureChartLib();
     const data = await fetchChartData(id, days);
     const prices = data.prices || [];
     const labels = prices.map(p=>{
@@ -941,7 +975,8 @@ async function loadChart(id, days){
     console.error(e);
     box.style.display = 'none';
     let msg = 'Não foi possível carregar o gráfico agora.';
-    if(!navigator.onLine) msg = 'Sem conexão com a internet.';
+    if(e.message === 'chartlib_indisponivel') msg = 'A biblioteca de gráficos (Chart.js) não carregou de nenhum CDN — algo na sua rede (firewall, antivírus, proxy corporativo) está bloqueando cdnjs.cloudflare.com, jsdelivr.net e unpkg.com.';
+    else if(!navigator.onLine) msg = 'Sem conexão com a internet.';
     else if(e.status === 429) msg = 'Limite de requisições da Binance atingido. Aguarde alguns segundos.';
     else if(e.status) msg = `A Binance respondeu com erro ${e.status}.`;
     else if(e.isNetworkError) msg = 'Não foi possível conectar à Binance (rede, firewall/antivírus ou bloqueio regional podem estar barrando o domínio). Veja o console (F12) para o erro exato.';
