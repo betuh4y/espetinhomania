@@ -635,7 +635,31 @@ document.querySelectorAll('nav.tabs button').forEach(btn=>{
 });
 
 /* ================= BINANCE API (gratuita, sem chave) ================= */
-const BINANCE = 'https://api.binance.com/api/v3';
+// A Binance recomenda este domínio (só dados públicos, sem trading) para apps de leitura —
+// costuma ter CORS mais confiável e não sofre os bloqueios de país que a API principal às vezes aplica.
+// Ainda assim, tentamos api.binance.com como plano B automático caso o primeiro falhe.
+const BINANCE_HOSTS = ['https://data-api.binance.vision/api/v3', 'https://api.binance.com/api/v3'];
+
+async function binanceFetch(path){
+  let lastErr = null;
+  for(const base of BINANCE_HOSTS){
+    try{
+      const res = await fetch(`${base}${path}`);
+      if(!res.ok){
+        const err = new Error('status ' + res.status);
+        err.status = res.status;
+        lastErr = err;
+        continue; // tenta o próximo host em erro HTTP também
+      }
+      return res;
+    }catch(e){
+      // erro de rede/CORS (fetch nem completa) — tenta o próximo host
+      e.isNetworkError = true;
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
 
 // Catálogo de moedas que analisamos, todas negociadas contra USDT na Binance.
 // Preço, variação, volume e gráfico vêm 100% da Binance; ícones vêm de um CDN público de ícones (CoinCap).
@@ -666,7 +690,7 @@ async function fetchMarkets(){
   try{
     // um único request pega o ticker de 24h de TODOS os pares da Binance;
     // filtramos no cliente para evitar erro de "símbolo inválido" caso algum par tenha saído de listagem
-    const res = await fetch(`${BINANCE}/ticker/24hr`);
+    const res = await binanceFetch(`/ticker/24hr`);
     if(!res.ok) throw new Error('status ' + res.status);
     const all = await res.json();
     const byPair = {};
@@ -730,16 +754,16 @@ async function fetchChartData(pair, days, attempt=1){
     return cached.data;
   }
   const {interval, limit} = klineParamsFor(days);
-  const res = await fetch(`${BINANCE}/klines?symbol=${pair}&interval=${interval}&limit=${limit}`);
-  if(res.status === 429 && attempt < 3){
-    // limite de requisições da Binance: espera e tenta de novo
-    await new Promise(r => setTimeout(r, 2000 * attempt));
-    return fetchChartData(pair, days, attempt + 1);
-  }
-  if(!res.ok){
-    const err = new Error('status ' + res.status);
-    err.status = res.status;
-    throw err;
+  let res;
+  try{
+    res = await binanceFetch(`/klines?symbol=${pair}&interval=${interval}&limit=${limit}`);
+  }catch(e){
+    if(e.status === 429 && attempt < 3){
+      // limite de requisições da Binance: espera e tenta de novo
+      await new Promise(r => setTimeout(r, 2000 * attempt));
+      return fetchChartData(pair, days, attempt + 1);
+    }
+    throw e;
   }
   const raw = await res.json();
   // kline: [openTime, open, high, low, close, volume, closeTime, ...]
@@ -917,9 +941,10 @@ async function loadChart(id, days){
     console.error(e);
     box.style.display = 'none';
     let msg = 'Não foi possível carregar o gráfico agora.';
-    if(e.status === 429) msg = 'Limite de requisições da Binance atingido. Aguarde alguns segundos.';
+    if(!navigator.onLine) msg = 'Sem conexão com a internet.';
+    else if(e.status === 429) msg = 'Limite de requisições da Binance atingido. Aguarde alguns segundos.';
     else if(e.status) msg = `A Binance respondeu com erro ${e.status}.`;
-    else if(!navigator.onLine) msg = 'Sem conexão com a internet.';
+    else if(e.isNetworkError) msg = 'Não foi possível conectar à Binance (rede, firewall/antivírus ou bloqueio regional podem estar barrando o domínio). Veja o console (F12) para o erro exato.';
     const errDiv = document.createElement('div');
     errDiv.className = 'chart-error loading-row';
     errDiv.innerHTML = `${msg}<br><button class="btn btn-ghost" style="margin-top:12px;" id="chartRetryBtn">Tentar novamente</button>`;
