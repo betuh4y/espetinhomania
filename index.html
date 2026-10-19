@@ -377,9 +377,13 @@ function upsert(id, d){
     me.hp = d.hp; $("vida").textContent = "❤ " + Math.max(0,d.hp) + "/10 ⚔ " + (d.k||0) + " ☠ " + (d.d||0);
     if (d.hp > 0) me.dead = false; else if (!me.dead){ me.dead = true; buzz([60,40,60]); respawn(); }
   }
-  const cPrev = o.c;
+  const cPrev = o.c, rx = o.x, ry = o.y;
+  const stale = !isNew && id !== me.id && d.ts && o.pts && d.ts <= o.pts;
+  const keep = stale ? {tx:o.tx, ty:o.ty, vx:o.vx, vy:o.vy, m:o.m, fx:o.fx, aa:o.aa, ts:o.ts, s:o.s} : null;
   Object.assign(o, d, {tx: d.x, ty: d.y});
-  if (!d.m){ o.vx = 0; o.vy = 0; }
+  if (keep) Object.assign(o, keep);
+  else { if (d.ts) o.pts = d.ts; if (!d.m){ o.vx = 0; o.vy = 0; } }
+  if (!isNew && id !== me.id){ o.x = rx; o.y = ry; }
   if (id === me.id){ o.x = me.x; o.y = me.y; }
   if (isNew && id !== me.id && me.id > id) chamar(id);
   if (isNew || cPrev !== o.c) count();
@@ -477,7 +481,7 @@ function loop(t){
     dirty = true;
   } else if (me.wasMoving) dirty = true;
   me.wasMoving = me.m;
-  if (dirty && t - lastSend > 70){
+  if (dirty && t - lastSend > (p2pAll() ? 160 : 70)){
     const el = Math.max(.016, (t - lastSend) / 1000);
     lastSend = t; dirty = false;
     me.aaS = me.aa; me.fxS = me.fx;
@@ -491,6 +495,7 @@ function loop(t){
     const o = players[k]; if (k === me.id) continue;
     predict(o, dt);
   }
+  if (t - (me.p2pT||0) > 33){ me.p2pT = t; p2pSend(t); }
   updTrucks(t); raceTick(); render(t); requestAnimationFrame(loop);
 }
 
@@ -599,6 +604,7 @@ function getPeer(id){
   if(peers[id])return peers[id];
   const pc=new RTCPeerConnection(ICE),tr=pc.addTransceiver("audio",{direction:"sendrecv"});
   const P=peers[id]={pc,tr,pend:[],ok:false,audio:null};
+  try{const dc=pc.createDataChannel("pos",{negotiated:true,id:0,ordered:false,maxRetransmits:0});P.dc=dc;dc.onmessage=e=>onPeerPos(id,e.data);dc.onopen=()=>{P.lastSent=""};}catch(e){}
   if(micTrack)tr.sender.replaceTrack(micTrack);
   pc.onicecandidate=e=>{if(e.candidate)sinal(id,"ice",e.candidate.toJSON())};
   pc.ontrack=e=>{if(P.audio)return;const a=new Audio();a.setAttribute("playsinline","");a.srcObject=e.streams[0]||new MediaStream([e.track]);a.muted=mutedIds.has(id);P.audio=a;a.play().catch(()=>{})};
@@ -876,7 +882,7 @@ function buildMap(){
 const CF=Array.from({length:28},(_,i)=>({x:690+Math.random()*220,y:Math.random()*180,v:12+Math.random()*14,c:["#d62828","#ffffff","#111111"][i%3],p:Math.random()*6}));
 drawMap=function(c,t){
   if(!MC)MC=buildMap();
-  t=t||0;c.drawImage(MC,0,0);
+  t=t||0;{const x0=Math.max(0,Math.floor(CAM.x)-2),y0=Math.max(0,Math.floor(CAM.y)-2),w=Math.min(WW-x0,Math.ceil(VW/ZOOM)+4),h=Math.min(WH-y0,Math.ceil(VH/ZOOM)+4);c.drawImage(MC,x0,y0,w,h,x0,y0,w,h)}
 };
 drawChar=function(c,x,y,p,walk,t){
   const ph=walk?Math.sin(t/110):0,bob=walk?-Math.abs(ph)*1.5:0,fx=p.fx||1;
@@ -1839,12 +1845,12 @@ function myTick(){
   for(const k of TRUCKS){
     if(me.tk===k.id){k.x=me.x;k.y=me.y;k.fx=me.fx;k.by=me.id;
       if(now-(k.wt||0)>90&&(k.lx!==Math.round(k.x)||k.ly!==Math.round(k.y)||k.lf!==k.fx)){const el=Math.max(.016,(now-(k.wt||now-100))/1000);const vx=Math.round((k.x-(k.lx??k.x))/el),vy=Math.round((k.y-(k.ly??k.y))/el);k.wt=now;k.lx=Math.round(k.x);k.ly=Math.round(k.y);k.lf=k.fx;db.ref("salas/"+room+"/caminhoes/"+k.id).update({x:k.lx,y:k.ly,fx:k.fx,vx:me.m?vx:0,vy:me.m?vy:0,ts:Math.round(Date.now()+srvOff)})}}
-    else predict(k,fdt);
+    else if(k.by&&players[k.by]&&players[k.by].tx!=null&&players[k.by].tk===k.id){const o=players[k.by];k.x=o.x;k.y=o.y;k.fx=o.fx||1}else predict(k,fdt);
   }
   for(const B of BUSES){
     if(me.bus===B.id&&me.busDrive){B.x=me.x;B.y=me.y;B.fx=me.fx;B.by=me.id;
       if(now-(B.wt||0)>90&&(B.lx!==Math.round(B.x)||B.ly!==Math.round(B.y)||B.lf!==B.fx)){const el=Math.max(.016,(now-(B.wt||now-100))/1000);const vx=Math.round((B.x-(B.lx??B.x))/el),vy=Math.round((B.y-(B.ly??B.y))/el);B.wt=now;B.lx=Math.round(B.x);B.ly=Math.round(B.y);B.lf=B.fx;db.ref("salas/"+room+"/onibus/"+B.id).update({x:B.lx,y:B.ly,fx:B.fx,vx:me.m?vx:0,vy:me.m?vy:0,ts:Math.round(Date.now()+srvOff)})}}
-    else predict(B,fdt);
+    else if(B.by&&players[B.by]&&players[B.by].tx!=null&&players[B.by].bus===B.id){const o=players[B.by];B.x=o.x;B.y=o.y;B.fx=o.fx||1}else predict(B,fdt);
     if(me.bus===B.id&&!me.busDrive){if(Math.abs(me.x-B.x)>.5||Math.abs(me.y-B.y)>.5){me.x=B.x;me.y=B.y;dirty=true}if(B.fx!==me.fx){me.fx=B.fx}}
   }
   if(me.ia&&(me.bus||me.tk))desmontar();
@@ -1878,6 +1884,27 @@ function predict(o,dt){
   if(ex*ex+ey*ey>250*250){o.x=px;o.y=py;return}
   const mv=age<.4?1:0;o.x+=(o.vx||0)*dt*mv;o.y+=(o.vy||0)*dt*mv;
   const k=Math.min(1,dt*9);o.x+=(px-o.x)*k;o.y+=(py-o.y)*k;
+}
+
+/* ===== Posições diretas entre jogadores (P2P / WebRTC) ===== */
+function p2pAll(){let n=0,o=0;for(const id in players){if(id===me.id)continue;n++;const P=peers[id];if(P&&P.dc&&P.dc.readyState==="open")o++}return n>0&&o===n}
+function p2pSend(t){
+  const open=[];for(const id in peers){const P=peers[id];if(P.dc&&P.dc.readyState==="open")open.push(P)}
+  if(!open.length)return;
+  const el=Math.max(.016,(t-(me.p2pL||t-33))/1000);me.p2pL=t;
+  const vx=me.m?Math.round((me.x-(me.p2x??me.x))/el):0,vy=me.m?Math.round((me.y-(me.p2y??me.y))/el):0;me.p2x=me.x;me.p2y=me.y;
+  const msg=JSON.stringify({x:Math.round(me.x*10)/10,y:Math.round(me.y*10)/10,vx:Math.max(-450,Math.min(450,vx)),vy:Math.max(-450,Math.min(450,vy)),ts:Math.round(Date.now()+srvOff),m:me.m,fx:me.fx,aa:Math.round(me.aa*100)/100,s:me.s});
+  const still=!me.m&&!me.wasP2PMoving;me.wasP2PMoving=me.m;
+  for(const P of open){
+    if(still&&P.lastSent&&t-(P.lastT||0)<500&&P.lastPos===Math.round(me.x)+","+Math.round(me.y))continue;
+    try{P.dc.send(msg);P.lastSent=msg;P.lastT=t;P.lastPos=Math.round(me.x)+","+Math.round(me.y)}catch(e){}
+  }
+}
+function onPeerPos(id,data){
+  let m;try{m=JSON.parse(data)}catch(e){return}
+  const o=players[id];if(!o||!m||typeof m.x!=="number")return;
+  if(o.pts&&m.ts<=o.pts)return;o.pts=m.ts;
+  o.tx=m.x;o.ty=m.y;o.vx=m.m?m.vx:0;o.vy=m.m?m.vy:0;o.ts=m.ts;o.m=m.m;o.fx=m.fx;o.aa=m.aa;o.s=m.s;
 }
 </script>
 </body>
