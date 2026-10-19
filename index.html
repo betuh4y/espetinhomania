@@ -377,10 +377,12 @@ function upsert(id, d){
     me.hp = d.hp; $("vida").textContent = "❤ " + Math.max(0,d.hp) + "/10 ⚔ " + (d.k||0) + " ☠ " + (d.d||0);
     if (d.hp > 0) me.dead = false; else if (!me.dead){ me.dead = true; buzz([60,40,60]); respawn(); }
   }
+  const cPrev = o.c;
   Object.assign(o, d, {tx: d.x, ty: d.y});
+  if (!d.m){ o.vx = 0; o.vy = 0; }
   if (id === me.id){ o.x = me.x; o.y = me.y; }
   if (isNew && id !== me.id && me.id > id) chamar(id);
-  count();
+  if (isNew || cPrev !== o.c) count();
 }
 function count(){
   const n = {sc:0, sp:0, na:0}; for (const k in players){ const c = players[k].c; n[TEAMS[c] ? c : "sp"]++; }
@@ -475,16 +477,19 @@ function loop(t){
     dirty = true;
   } else if (me.wasMoving) dirty = true;
   me.wasMoving = me.m;
-  if (dirty && t - lastSend > (MOB ? 130 : 90)){
+  if (dirty && t - lastSend > 70){
+    const el = Math.max(.016, (t - lastSend) / 1000);
     lastSend = t; dirty = false;
     me.aaS = me.aa; me.fxS = me.fx;
-    myRef.update({x: Math.round(me.x), y: Math.round(me.y), m: me.m, s: me.s, fx: me.fx, aa: Math.round(me.aa*100)/100});
+    const cl = v => Math.max(-450, Math.min(450, Math.round(v)));
+    const vx = me.m ? cl((me.x - (me.lsx ?? me.x)) / el) : 0, vy = me.m ? cl((me.y - (me.lsy ?? me.y)) / el) : 0;
+    me.lsx = me.x; me.lsy = me.y;
+    myRef.update({x: Math.round(me.x), y: Math.round(me.y), vx, vy, ts: Math.round(Date.now() + srvOff), m: me.m, s: me.s, fx: me.fx, aa: Math.round(me.aa*100)/100});
   }
   const mine = players[me.id]; if (mine){ mine.x = me.x; mine.y = me.y; mine.s = me.s; mine.m = me.m; mine.fx = me.fx; mine.aa = me.aa; }
   for (const k in players){
     const o = players[k]; if (k === me.id) continue;
-    if (Math.hypot(o.tx-o.x, o.ty-o.y) > 250){ o.x = o.tx; o.y = o.ty; }
-    o.x += (o.tx - o.x) * Math.min(1, dt*10); o.y += (o.ty - o.y) * Math.min(1, dt*10);
+    predict(o, dt);
   }
   updTrucks(t); raceTick(); render(t); requestAnimationFrame(loop);
 }
@@ -1830,16 +1835,16 @@ function updRank(){
 const _raceTick=raceTick;
 raceTick=function(){_raceTick();myTick()};
 function myTick(){
-  const now=performance.now();
+  const now=performance.now(),fdt=Math.min(.05,(now-(myTick.l||now))/1000);myTick.l=now;
   for(const k of TRUCKS){
     if(me.tk===k.id){k.x=me.x;k.y=me.y;k.fx=me.fx;k.by=me.id;
-      if(now-(k.wt||0)>150&&(k.lx!==Math.round(k.x)||k.ly!==Math.round(k.y)||k.lf!==k.fx)){k.wt=now;k.lx=Math.round(k.x);k.ly=Math.round(k.y);k.lf=k.fx;db.ref("salas/"+room+"/caminhoes/"+k.id).update({x:k.lx,y:k.ly,fx:k.fx})}}
-    else{k.x+=(k.tx-k.x)*.15;k.y+=(k.ty-k.y)*.15;if(Math.hypot(k.tx-k.x,k.ty-k.y)>300){k.x=k.tx;k.y=k.ty}}
+      if(now-(k.wt||0)>90&&(k.lx!==Math.round(k.x)||k.ly!==Math.round(k.y)||k.lf!==k.fx)){const el=Math.max(.016,(now-(k.wt||now-100))/1000);const vx=Math.round((k.x-(k.lx??k.x))/el),vy=Math.round((k.y-(k.ly??k.y))/el);k.wt=now;k.lx=Math.round(k.x);k.ly=Math.round(k.y);k.lf=k.fx;db.ref("salas/"+room+"/caminhoes/"+k.id).update({x:k.lx,y:k.ly,fx:k.fx,vx:me.m?vx:0,vy:me.m?vy:0,ts:Math.round(Date.now()+srvOff)})}}
+    else predict(k,fdt);
   }
   for(const B of BUSES){
     if(me.bus===B.id&&me.busDrive){B.x=me.x;B.y=me.y;B.fx=me.fx;B.by=me.id;
-      if(now-(B.wt||0)>150&&(B.lx!==Math.round(B.x)||B.ly!==Math.round(B.y)||B.lf!==B.fx)){B.wt=now;B.lx=Math.round(B.x);B.ly=Math.round(B.y);B.lf=B.fx;db.ref("salas/"+room+"/onibus/"+B.id).update({x:B.lx,y:B.ly,fx:B.fx})}}
-    else{B.x+=(B.tx-B.x)*.15;B.y+=(B.ty-B.y)*.15;if(Math.hypot(B.tx-B.x,B.ty-B.y)>300){B.x=B.tx;B.y=B.ty}}
+      if(now-(B.wt||0)>90&&(B.lx!==Math.round(B.x)||B.ly!==Math.round(B.y)||B.lf!==B.fx)){const el=Math.max(.016,(now-(B.wt||now-100))/1000);const vx=Math.round((B.x-(B.lx??B.x))/el),vy=Math.round((B.y-(B.ly??B.y))/el);B.wt=now;B.lx=Math.round(B.x);B.ly=Math.round(B.y);B.lf=B.fx;db.ref("salas/"+room+"/onibus/"+B.id).update({x:B.lx,y:B.ly,fx:B.fx,vx:me.m?vx:0,vy:me.m?vy:0,ts:Math.round(Date.now()+srvOff)})}}
+    else predict(B,fdt);
     if(me.bus===B.id&&!me.busDrive){if(Math.abs(me.x-B.x)>.5||Math.abs(me.y-B.y)>.5){me.x=B.x;me.y=B.y;dirty=true}if(B.fx!==me.fx){me.fx=B.fx}}
   }
   if(me.ia&&(me.bus||me.tk))desmontar();
@@ -1852,8 +1857,8 @@ function drawBuses(c,t){BUSES.slice().sort((a,b)=>a.y-b.y).forEach(B=>drawBus(c,
 
 /* ===== Sync Firebase dos veículos grandes ===== */
 function initBig(base){
-  base.child("onibus").on("value",s=>{const v=s.val()||{};BUSES.forEach(B=>{if(me.bus===B.id&&me.busDrive)return;const d=v[B.id];if(d){B.tx=d.x;B.ty=d.y;B.fx=d.fx||1;B.by=d.by||""}else{B.tx=B.hx;B.ty=B.hy;B.by=""}})});
-  base.child("caminhoes").on("value",s=>{const v=s.val()||{};TRUCKS.forEach(k=>{if(me.tk===k.id)return;const d=v[k.id];if(d){k.tx=d.x;k.ty=d.y;k.fx=d.fx||1;k.by=d.by||""}else{k.tx=k.hx;k.ty=k.hy;k.by=""}})});
+  base.child("onibus").on("value",s=>{const v=s.val()||{};BUSES.forEach(B=>{if(me.bus===B.id&&me.busDrive)return;const d=v[B.id];if(d){B.tx=d.x;B.ty=d.y;B.fx=d.fx||1;B.by=d.by||"";B.vx=d.vx||0;B.vy=d.vy||0;B.ts=d.ts||0}else{B.tx=B.hx;B.ty=B.hy;B.by=""}})});
+  base.child("caminhoes").on("value",s=>{const v=s.val()||{};TRUCKS.forEach(k=>{if(me.tk===k.id)return;const d=v[k.id];if(d){k.tx=d.x;k.ty=d.y;k.fx=d.fx||1;k.by=d.by||"";k.vx=d.vx||0;k.vy=d.vy||0;k.ts=d.ts||0}else{k.tx=k.hx;k.ty=k.hy;k.by=""}})});
   lastKills=me.k||0;updEco();
 }
 
@@ -1864,6 +1869,16 @@ bindBtn("aFw",soltarFogos);
 addEventListener("keydown",e=>{if(!me||chatting)return;if(e.key==="f"||e.key==="F")soltarFogos()});
 genFavela();
 updEco();
+
+/* ===== Previsão de movimento (menos lag) ===== */
+function predict(o,dt){
+  if(o.tx==null)return;
+  const age=o.ts?Math.max(0,Math.min(.4,(Date.now()+srvOff-o.ts)/1000)):0;
+  const px=o.tx+(o.vx||0)*age,py=o.ty+(o.vy||0)*age,ex=px-o.x,ey=py-o.y;
+  if(ex*ex+ey*ey>250*250){o.x=px;o.y=py;return}
+  const mv=age<.4?1:0;o.x+=(o.vx||0)*dt*mv;o.y+=(o.vy||0)*dt*mv;
+  const k=Math.min(1,dt*9);o.x+=(px-o.x)*k;o.y+=(py-o.y)*k;
+}
 </script>
 </body>
 </html>
